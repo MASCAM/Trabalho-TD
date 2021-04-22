@@ -61,9 +61,9 @@ class Whiteboard:
     def get_playback_segment_size_time_at_buffer(self):
         """
         It returns a list of the time each segment size spends
-        in the buffer before was played by the player. The list
+        in the buffer before it was played by the player. The list
         will increase over time. It is ordered from the oldest
-        segment until de newest one (from the begging until the
+        segment until the newest one (from the beginnng until the
         end of the reproduced video).
         """
         pos = 0
