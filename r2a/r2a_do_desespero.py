@@ -90,10 +90,13 @@ class R2A_do_desespero(IR2A):
         #selected Qi on BSlow = 0
         #if (len(self.throughputs) > 50):
         #    self.throughputs = self.throughputs[30:]
-            
+        n = 10
         variance = np.var(self.throughputs)
-        std_error_of_the_mean = np.std(self.throughputs)
-        std_deviation = std_error_of_the_mean
+        std_error_of_the_mean = np.std(self.throughputs[-n:])
+        #std_deviation = std_error_of_the_mean
+        std_error_of_the_mean /= math.sqrt(len(self.throughputs[-n:]))
+        #error = std_error_of_the_mean / 46980
+        #print(error)
         if (len(self.throughputs) == 1):
 
             self.P.append(std_error_of_the_mean)
@@ -101,9 +104,20 @@ class R2A_do_desespero(IR2A):
             self.kalman_gain = [0.5]
 
         a = 0
-        n = 15
-        std_error_of_the_mean /= math.sqrt(len(self.throughputs))
-        alfa = 0.9
+        
+        
+        alfa = 0.7
+        """
+        for i in range(0, len(self.throughputs)):
+            if (i <= n):
+                self.kalman_filter.append(0)     #se forem as primeiras posições n do vetor de entrada somente aplica 0 na saída
+
+            else:
+                a = self.kalman_filter[i - 1]       #caso contrário aplica a fórmula recursiva do filtro de média móvel demonstrado
+                b = (self.throughputs[i] - self.throughputs[i - n]) / n
+                self.kalman_filter.append(a + b)
+
+        """
         for i in range(0, len(self.throughputs)):
             
             if (i == 0):
@@ -116,10 +130,13 @@ class R2A_do_desespero(IR2A):
                 a = alfa * self.kalman_filter[i - 1]       #caso contrário aplica a fórmula recursiva do filtro de média móvel ponderado exponencialmente demonstrado
                 b = (1 - alfa) * self.throughputs[i - 1]
                 self.kalman_filter.append(a + b)
-
+        
         #print("Sinal Original: " + str(self.throughputs[len(self.throughputs) - 1]) + " Ganho de Kalmann: " + str(k) + " Sinal Filtrado: " + str(self.kalman_filter[len(self.kalman_filter) - 1]))
-        avg = stats.mean(self.kalman_filter)
+        avg = self.kalman_filter[len(self.kalman_filter) - 1]#stats.mean(self.kalman_filter)
         self.avg_bandwidth.append(avg)  #acho que nem faz sentido
+        std_error_of_the_mean = np.std(self.kalman_filter[-n:])/math.sqrt(n)
+        error = std_error_of_the_mean / 46980
+        print(error)
         #print(self.avg_bandwidth)
         selected_qi = self.qi[0]
         D = 0.0
@@ -137,7 +154,7 @@ class R2A_do_desespero(IR2A):
                     
             elif (self.buffer_size[len(self.buffer_size) - 1] > self.buffer_size[len(self.buffer_size) - 2] + 3 or self.buffer_size[len(self.buffer_size) - 1] + 10 > self.max_buffer_size): #or (self.buffer_size[len(self.buffer_size) - 2] <= self.buffer_size[len(self.buffer_size) - 1])):
 
-                self.gain *= 2.0
+                self.gain = 2.0
                 #
                 self.avg_bandwidth[len(self.avg_bandwidth) - 1] *= self.gain
 
@@ -188,14 +205,23 @@ class R2A_do_desespero(IR2A):
 
                     break
 
-            if (actual_buffer_size  + 10 > self.max_buffer_size and self.selected_index == 0):
+            if (actual_buffer_size  >= 18 and self.selected_index == 0):
 
                 self.selected_index = 10
 
-            elif (self.selected_index >= 15 and actual_buffer_size <= 15):
+            elif (self.selected_index >= 15 and actual_buffer_size <= 18 and error >= 1.0):
 
-                self.selected_index -= 5
+                self.selected_index -= math.floor(5 * math.sqrt(error))
                 
+            elif (self.selected_index <= 10 and actual_buffer_size >= 15 and error >= 1.0):
+
+                self.selected_index += math.floor(5 * math.sqrt(error))
+
+            elif (actual_buffer_size + 10 >= self.max_buffer_size):
+
+                self.selected_index += 3
+            #média de índices, se for maior ou menor que a média mais ou menos o desvio padrão, coloca o valor dentro da faixa
+            #se extrapolar os valores esperados
             """
             elif (abs(self.selected_index - self.last_index) > 4 and self.selected_index > self.last_index):
 
@@ -204,10 +230,11 @@ class R2A_do_desespero(IR2A):
             elif (abs(self.selected_index - self.last_index) > 4 and self.selected_index < self.last_index):
 
                 self.selected_index -= 4
-
+            """
             self.selected_index = 19 if self.selected_index > 19 else self.selected_index
             self.selected_index = 0 if self.selected_index < 0  else self.selected_index
-            """
+            self.selected_index = self.buffer_size[len(self.buffer_size) - 1] - 3 if self.buffer_size[len(self.buffer_size) - 1] <= self.selected_index else self.selected_index
+            
             selected_qi = self.qi[self.selected_index]
             self.last_index = self.selected_index
             
