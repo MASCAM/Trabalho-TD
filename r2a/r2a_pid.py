@@ -95,7 +95,7 @@ class R2A_PID(IR2A):
             #2.0 0.8 0.02
             proportional_gain = 2.0 * self.errors[-1]
             derivative_gain = 1.6 * (self.errors[-2] - self.errors[-1])/(self.segments_sizes[-1] / self.avg_bandwidth[-1])
-            integrative_gain = 3.2 * np.sum(self.errors[-n:])
+            integrative_gain = 6.4 * np.sum(self.errors[-n:])
             self.gain = proportional_gain + derivative_gain + integrative_gain
 
     
