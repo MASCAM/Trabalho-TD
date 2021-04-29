@@ -15,16 +15,14 @@ class R2A_PID(IR2A):
         self.avg_bandwidth = []
         self.buffer_size = []
         self.biased_shifting_average_filter = []
-        self.biased_shifting_average_filter.append(2500000) #parâmetros definidos inicialmente como 
-        self.buffer_size.append(0)                          #um chute inicial para as estimativas
-        self.avg_bandwidth.append(1000000)                  #lembrando que o throughput começa já com um elemento no vetor
-        self.segments_sizes.append(1000000)                 #por isso essas inicializações aqui
+        self.segments_sizes.append(2500000)                 #parâmetro definido como chute inicial
         self.max_buffer_size = self.whiteboard.get_max_buffer_size()
         self.request_time = 0
         self.qi = []
-        self.minimum_buffersize = 5                         #definido empiricamente
+        self.minimum_buffersize = 3                         #definido empiricamente
         self.selected_index = 0                             #começa sempre na menor qualidade
         self.gain = 1.0                                     #ganho neutro 
+        self.errors = []
 
 
     def handle_xml_request(self, msg):
@@ -43,7 +41,7 @@ class R2A_PID(IR2A):
 
     def handle_segment_size_request(self, msg):
 
-        max_bit_rate = 5726737                                  #determina um teto para a taxa de bits, uma medida para 
+        max_bit_rate = 4726737                                  #determina um teto para a taxa de bits, uma medida para 
         buffer = self.whiteboard.get_playback_buffer_size()     #diminuir o ruído do sinal de entrada logo de cara
         if (len(buffer) > 0):                                   #afinal a maxima taxa de bits é 4726737 
             actual_buffer_size = buffer[len(buffer) - 1][1]
@@ -62,9 +60,13 @@ class R2A_PID(IR2A):
             
             self.throughputs.append(throughputs_top)
 
-        n = 10          #número de elementos pelos quais o filtro irá percorrer
+        n = 10         #número de elementos pelos quais o filtro irá percorrer
         a = 0
         alfa = 0.7      #obtido empiricamente, muitos testes para determinar o mais adequado
+        if (len(self.throughputs) > 50):
+
+            self.throughputs = self.throughputs[-2 * n:]
+
         for i in range(0, len(self.throughputs)):   #filtra o sinal de entrada
             
             if (i == 0):
@@ -80,43 +82,41 @@ class R2A_PID(IR2A):
         
         avg = self.biased_shifting_average_filter[len(self.biased_shifting_average_filter) - 1] #vazão filtrada como estimativa de banda
         self.avg_bandwidth.append(avg)  
-        std_error_of_the_mean = np.std(self.biased_shifting_average_filter[-n:])/math.sqrt(n) #calcula o desvio padrão da média dos últimos n elementos filtrados
-        error = std_error_of_the_mean / 46980   #esse erro é muito alto então se cria uma base para o erro para poder converte-lo para 
+        std_error_of_the_mean = np.std(self.biased_shifting_average_filter)/math.sqrt(n) #calcula o desvio padrão da média dos últimos n elementos filtrados
+        error = std_error_of_the_mean / max_bit_rate  #esse erro é muito alto então se cria uma base para o erro para poder converte-lo para 
+        self.errors.append(error)
         D = 0.0                                 #a mesma base dos índices de qualidade
         T = 0.0
         sum_D = 0.0
         sum_T = 0.0
 
+        if (len(self.errors) > n):
+
+            #2.0 0.8 0.02
+            proportional_gain = 2.0 * self.errors[-1]
+            derivative_gain = 1.6 * (self.errors[-2] - self.errors[-1])/(self.segments_sizes[-1] / self.avg_bandwidth[-1])
+            integrative_gain = 3.2 * np.sum(self.errors[-n:])
+            self.gain = proportional_gain + derivative_gain + integrative_gain
+
+    
         if ((actual_buffer_size > self.minimum_buffersize) and (len(self.throughputs) > n)):
 
-            if (self.biased_shifting_average_filter[len(self.biased_shifting_average_filter) - 2] > self.biased_shifting_average_filter[len(self.biased_shifting_average_filter) - 1] and self.selected_index > 0 and self.buffer_size[len(self.buffer_size) - 1] + 10 <= self.max_buffer_size): #or (self.buffer_size[len(self.buffer_size) - 2] - self.buffer_size[len(self.buffer_size) - 1] >= self.minimum_buffersize)):
-                #de certa forma como ambos sinal filtrado
-                self.gain *= 0.5
-                self.avg_bandwidth[len(self.avg_bandwidth) - 1] *= self.gain
-                    
-            elif (self.buffer_size[len(self.buffer_size) - 1] > self.buffer_size[len(self.buffer_size) - 2] + 3 or self.buffer_size[len(self.buffer_size) - 1] + 10 > self.max_buffer_size): 
-                #e buffer size se alteram somente quando há inconstâncias no sinal de entrada
-                self.gain = 2.0
-                self.avg_bandwidth[len(self.avg_bandwidth) - 1] *= self.gain
-                #pode-se dizer que o ganho padrão do sistema está sendo modelado pelo erro
-            if (self.selected_index == 0):  #evita que o sistema fique preso em um zero
-
-                self.gain = 1.0
-            #todos os parâmetros do bloco de comparações acima foram determinados empiricamente
             for i in range(len(self.throughputs) - n, len(self.throughputs)):
                 #esse laço implementa o algoritmo 1 indicado no artigo 2 do relatório
-                T = self.segments_sizes[i] / self.avg_bandwidth[i]
+                T = self.segments_sizes[i] / self.avg_bandwidth[i]*self.gain
                 D = self.segments_sizes[i]
                 sum_D += D
                 sum_T += T
-                if (sum_T * self.minimum_buffersize > actual_buffer_size):
+                if (sum_T > actual_buffer_size):
 
                     temp = sum_D / abs(sum_T - self.minimum_buffersize)
+                    #temp *= abs(self.gain)
+                    print(temp)
                     if (temp < max_bit_rate):
 
                         max_bit_rate = temp
 
-
+            max_bit_rate *= abs(self.gain)
             for i in range(0, len(self.qi)):
                 #seleciona o indice de qualidade correspondente ao bit rate ideal calculado
                 if max_bit_rate > self.qi[i]:
@@ -126,28 +126,15 @@ class R2A_PID(IR2A):
                 else:
 
                     break
-            #bloco mais importante do sistema de controle e que foi todo definido empiricamente, tentativa e erro
-            if (actual_buffer_size  >= 18 and self.selected_index == 0):
-            #impede que o buffer size exploda pra cima
-                self.selected_index = 10
 
-            elif (self.selected_index >= 15 and actual_buffer_size <= 18 and error >= 1.0):
-            #se o buffer size está pequeno para um index de qualidade tão alto, tendo um erro significativo
-                self.selected_index -= math.floor(5 * math.sqrt(error)) #diminui o índice
-                
-            elif (self.selected_index <= 10 and actual_buffer_size >= 15 and error >= 1.0):
-            #o contrário do caso acima
-                self.selected_index += math.floor(5 * math.sqrt(error))
-
-            elif (actual_buffer_size + 10 >= self.max_buffer_size):
-            #impede o overflow do buffer
-                self.selected_index += 3
+            print(self.gain)
+            #a linha abaixo impede zeros no sistema (por conta do atraso aleatório no sinal)
+            self.selected_index = self.buffer_size[len(self.buffer_size) - 1] - 2 if self.buffer_size[len(self.buffer_size) - 1] <= self.selected_index else self.selected_index
             #as duas linhas abaixo impedem índices inválidos
             self.selected_index = 19 if self.selected_index > 19 else self.selected_index
             self.selected_index = 0 if self.selected_index < 0  else self.selected_index
-            self.selected_index = self.buffer_size[len(self.buffer_size) - 1] - 3 if self.buffer_size[len(self.buffer_size) - 1] <= self.selected_index else self.selected_index
-            #a linha acima impede que um índice escolhido seja maior do que o buffer size
             selected_qi = self.qi[self.selected_index]
+
         
         else:
             #serve de inicialização, são selecionados N índices iguais a 0 no início da execução
