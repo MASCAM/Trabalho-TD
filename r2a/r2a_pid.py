@@ -1,3 +1,9 @@
+#Trabalho realizado como parte da disciplina de Transmissão de Dados 2020/2
+#Alunos:
+#João Vítor Arantes Cabral - 17/0126048
+#Leonardo Felipe de Oliveira - 17/0148751
+#Gabriel Fernandes Carvalho - 17/0142698
+
 from r2a.ir2a import IR2A
 from player.parser import *
 import time
@@ -10,11 +16,11 @@ class R2A_PID(IR2A):
 
     def __init__(self, id):
         IR2A.__init__(self, id)
-        self.throughputs = []
-        self.segments_sizes = []
-        self.avg_bandwidth = []
-        self.buffer_size = []
-        self.biased_shifting_average_filter = []
+        self.throughputs = []                               #vetor de vazões 
+        self.segments_sizes = []                            #vetor do tamanho dos segmentos
+        self.avg_bandwidth = []                             #vetor da média de vazões 
+        self.buffer_size = []                               #vetor do tamanho do buffer
+        self.biased_shifting_average_filter = []            #vetor do filtro de média móvel enviesada
         self.segments_sizes.append(2500000)                 #parâmetro definido como chute inicial
         self.max_buffer_size = self.whiteboard.get_max_buffer_size()
         self.request_time = 0
@@ -22,7 +28,7 @@ class R2A_PID(IR2A):
         self.minimum_buffersize = 3                         #definido empiricamente
         self.selected_index = 0                             #começa sempre na menor qualidade
         self.gain = 1.0                                     #ganho neutro 
-        self.errors = []
+        self.errors = []                                    #vetor de desvio padrão da média
 
 
     def handle_xml_request(self, msg):
@@ -61,9 +67,9 @@ class R2A_PID(IR2A):
             self.throughputs.append(throughputs_top)
 
         n = 10         #número de elementos pelos quais o filtro irá percorrer
-        a = 0
+        a = 0.0
         alfa = 0.7      #obtido empiricamente, muitos testes para determinar o mais adequado
-        if (len(self.throughputs) > 50):
+        if (len(self.throughputs) > 50):    #para não virar um vetor muito grande
 
             self.throughputs = self.throughputs[-2 * n:]
 
@@ -92,7 +98,8 @@ class R2A_PID(IR2A):
 
         if (len(self.errors) > n):
 
-            #2.0 0.8 0.02
+            #2.0 0.8 0.02 foram os parâmetros determinados com a sintonia inicial
+            #seleciona o ganho PID de acordo com a fórmula encontrada no slide em anexo do relatório
             proportional_gain = 2.0 * self.errors[-1]
             derivative_gain = 1.6 * (self.errors[-2] - self.errors[-1])/(self.segments_sizes[-1] / self.avg_bandwidth[-1])
             integrative_gain = 6.4 * np.sum(self.errors[-n:])
@@ -110,8 +117,6 @@ class R2A_PID(IR2A):
                 if (sum_T > actual_buffer_size):
 
                     temp = sum_D / abs(sum_T - self.minimum_buffersize)
-                    #temp *= abs(self.gain)
-                    print(temp)
                     if (temp < max_bit_rate):
 
                         max_bit_rate = temp
@@ -127,7 +132,7 @@ class R2A_PID(IR2A):
 
                     break
 
-            print(self.gain)
+            #print(self.gain) se quiser observar o ganho do sistema
             #a linha abaixo impede zeros no sistema (por conta do atraso aleatório no sinal)
             self.selected_index = self.buffer_size[len(self.buffer_size) - 1] - 2 if self.buffer_size[len(self.buffer_size) - 1] <= self.selected_index else self.selected_index
             #as duas linhas abaixo impedem índices inválidos
